@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Socratic Shield v3.5</title>
+<title>Socratic Shield v3.7</title>
 <style>
 *{box-sizing:border-box}body{font-family:Arial,sans-serif;margin:0;background:#f3f4f6;color:#111827}.app{max-width:980px;margin:auto;background:#fff;min-height:100vh}header{padding:18px 20px;border-bottom:1px solid #ddd}h1{margin:0;font-size:22px}.sub{color:#6b7280;font-size:13px;margin-top:5px}.toolbar{padding:14px 18px;border-bottom:1px solid #e5e7eb;background:#fafafa}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row input,.row select{padding:10px;border:1px solid #bbb;border-radius:9px;font-size:14px}.key{flex:1;min-width:220px}.model{min-width:180px}.btn{padding:10px 14px;border:0;border-radius:9px;background:#111827;color:white}.btn.secondary{background:#e5e7eb;color:#111827}.small{font-size:12px;color:#6b7280}.chat{padding:18px}.msg{padding:12px 14px;border-radius:14px;margin:10px 0;max-width:88%;white-space:pre-wrap;line-height:1.45}.user{background:#e5e7eb;margin-left:auto}.ai{background:#eef2ff}.system{background:#fff7ed;border:1px solid #fed7aa;font-size:13px}.panel{margin:18px;padding:15px;border:1px solid #ddd;border-radius:14px;background:#fafafa}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:14px}.item{padding:9px;background:white;border:1px solid #e5e7eb;border-radius:9px}.status{font-weight:bold}.on{color:#b91c1c}.off{color:#047857}.warning{color:#92400e}.ok{color:#047857}form{display:flex;gap:8px;padding:15px;border-top:1px solid #ddd;position:sticky;bottom:0;background:white}#input{flex:1;padding:13px;border:1px solid #bbb;border-radius:10px;font-size:16px}form button{padding:13px 18px;border:0;border-radius:10px;background:#111827;color:white}.settings{margin-top:9px}.hidden{display:none}@media(max-width:650px){.grid{grid-template-columns:repeat(2,1fr)}.msg{max-width:94%}}
 </style>
 </head>
 <body>
 <div class="app">
-<header><h1>🛡️ Socratic Shield — Prototype v3.5</h1><div class="sub">Agent A: local understanding + knowledge tool + language tool • Agent B: experimental behavioral monitor</div></header>
+<header><h1>🛡️ Socratic Shield — Prototype v3.7</h1><div class="sub">Agent A: local understanding + knowledge tool + language tool • Agent B: experimental behavioral monitor</div></header>
 
 <div class="toolbar">
   <div class="row">
@@ -60,7 +60,7 @@
 
 <script>
 // ============================================================
-// SOCRATIC SHIELD v3.6
+// SOCRATIC SHIELD v3.7
 // Agent B is intentionally kept separate from Agent A.
 // This is an experimental prototype, not a production safety system.
 // ============================================================
@@ -96,7 +96,7 @@ function createTopic(topic){
 function detectTopic(message){
   const m = String(message||'').toLowerCase();
 
-  // v3.6: topic detection is explicit and independent of the previous topic.
+  // v3.7: topic detection is explicit and independent of the previous topic.
   // This prevents an unrelated question from inheriting the old topic.
   if(/\b(cpu|processor|computer|phone|smartphone|laptop|keyboard|mouse|screen|monitor|charging port|port|network|wifi|cyber|hacking|hack|software|hardware)\b/.test(m)) return "computer";
   if(/\b(biology|cell|plant|animal|human body|reproduction|dna|genetics|organ|photosynthesis|chlorophyll)\b/.test(m)) return "biology";
