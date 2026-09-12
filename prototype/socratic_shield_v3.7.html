@@ -1,0 +1,789 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Socratic Shield v3.5</title>
+<style>
+*{box-sizing:border-box}body{font-family:Arial,sans-serif;margin:0;background:#f3f4f6;color:#111827}.app{max-width:980px;margin:auto;background:#fff;min-height:100vh}header{padding:18px 20px;border-bottom:1px solid #ddd}h1{margin:0;font-size:22px}.sub{color:#6b7280;font-size:13px;margin-top:5px}.toolbar{padding:14px 18px;border-bottom:1px solid #e5e7eb;background:#fafafa}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.row input,.row select{padding:10px;border:1px solid #bbb;border-radius:9px;font-size:14px}.key{flex:1;min-width:220px}.model{min-width:180px}.btn{padding:10px 14px;border:0;border-radius:9px;background:#111827;color:white}.btn.secondary{background:#e5e7eb;color:#111827}.small{font-size:12px;color:#6b7280}.chat{padding:18px}.msg{padding:12px 14px;border-radius:14px;margin:10px 0;max-width:88%;white-space:pre-wrap;line-height:1.45}.user{background:#e5e7eb;margin-left:auto}.ai{background:#eef2ff}.system{background:#fff7ed;border:1px solid #fed7aa;font-size:13px}.panel{margin:18px;padding:15px;border:1px solid #ddd;border-radius:14px;background:#fafafa}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:14px}.item{padding:9px;background:white;border:1px solid #e5e7eb;border-radius:9px}.status{font-weight:bold}.on{color:#b91c1c}.off{color:#047857}.warning{color:#92400e}.ok{color:#047857}form{display:flex;gap:8px;padding:15px;border-top:1px solid #ddd;position:sticky;bottom:0;background:white}#input{flex:1;padding:13px;border:1px solid #bbb;border-radius:10px;font-size:16px}form button{padding:13px 18px;border:0;border-radius:10px;background:#111827;color:white}.settings{margin-top:9px}.hidden{display:none}@media(max-width:650px){.grid{grid-template-columns:repeat(2,1fr)}.msg{max-width:94%}}
+</style>
+</head>
+<body>
+<div class="app">
+<header><h1>🛡️ Socratic Shield — Prototype v3.5</h1><div class="sub">Agent A: local understanding + knowledge tool + language tool • Agent B: experimental behavioral monitor</div></header>
+
+<div class="toolbar">
+  <div class="row">
+    <select id="mode" class="model" aria-label="AI mode">
+      <option value="demo">Demo mode</option>
+      <option value="gemini">Gemini Direct</option>
+      <option value="agent-tools">Agent A — Tool Architecture</option>
+    </select>
+    <select id="model" class="model" aria-label="Gemini model">
+      <option value="gemini-3.6-flash">gemini-3.6-flash</option>
+      <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite</option>
+    </select>
+    <input id="apiKey" class="key" type="password" placeholder="Gemini API key (not saved)">
+    <button id="testBtn" class="btn secondary" type="button">Test connection</button>
+  </div>
+  <div class="settings small">Personal prototype: the Gemini key is used only in this page memory. Tool Architecture mode uses a knowledge tool plus Gemini as the language tool; the language tool receives the structured understanding and retrieved knowledge rather than simply the raw user request.</div>
+  <div id="connection" class="small settings">Mode: Demo</div>
+</div>
+
+<div id="chat" class="chat"></div>
+
+<div class="panel">
+<h3>Agent B — Live State</h3>
+<div class="grid">
+<div class="item">Topic: <b id="topic">unknown</b></div>
+<div class="item">Attention: <b id="attention">0</b></div>
+<div class="item">Risk: <b id="risk">0</b></div>
+<div class="item">Shield: <span id="shield" class="status off">OFF</span></div>
+<div class="item">Hard stop: <span id="stop" class="status off">OFF</span></div>
+<div class="item">Progression: <b id="progression">0 turns</b></div>
+  <div class="item">Objective: <b id="objective">unknown</b></div>
+  <div class="item">Requested output: <b id="requestedOutput">unknown</b></div>
+  <div class="item">Target: <b id="target">unknown</b></div>
+  <div class="item">Purpose: <b id="purpose">unknown</b></div>
+  <div class="item">Confidence: <b id="confidence">unknown</b></div>
+</div>
+<p class="small" id="signals">Signals: none</p>
+<p class="small" id="stateNote">Agent B analyzes first. The shared Understanding Layer describes what the user needs; Agent B uses it for safety evidence, while Agent A uses it for answer planning.</p>
+<p class="small" id="agentTrace">Agent A tools: not used yet.</p>
+</div>
+
+<form id="form">
+<input id="input" placeholder="Ask Agent A something..." autocomplete="off">
+<button id="sendBtn">Send</button>
+</form>
+</div>
+
+<script>
+// ============================================================
+// SOCRATIC SHIELD v3.6
+// Agent B is intentionally kept separate from Agent A.
+// This is an experimental prototype, not a production safety system.
+// ============================================================
+
+const topics = {};
+let currentTopic = null;
+
+function createTopic(topic){
+  if(!topics[topic]){
+    topics[topic] = {
+      summary: "",
+      progression: [],
+      history: [],
+      attention_level: 0,
+      risk_score: 0,
+      shield_active: false,
+      hard_stop: false,
+      objective_clarity: "unknown",
+      safe_information_mode: false,
+      understanding: null,
+      context: {
+        subject: "",
+        objectives: [],
+        key_targets: [],
+        recent_turns: []
+      },
+      knowledge_cache: {},
+      tool_trace: "Agent A tools: not used yet."
+    };
+  }
+}
+
+function detectTopic(message){
+  const m = String(message||'').toLowerCase();
+
+  // v3.6: topic detection is explicit and independent of the previous topic.
+  // This prevents an unrelated question from inheriting the old topic.
+  if(/\b(cpu|processor|computer|phone|smartphone|laptop|keyboard|mouse|screen|monitor|charging port|port|network|wifi|cyber|hacking|hack|software|hardware)\b/.test(m)) return "computer";
+  if(/\b(biology|cell|plant|animal|human body|reproduction|dna|genetics|organ|photosynthesis|chlorophyll)\b/.test(m)) return "biology";
+  if(/\b(physics|force|motion|energy|electricity|magnet|light|optics|ice|float|floating|density|buoyancy|gravity)\b/.test(m)) return "physics";
+  if(/\b(chemistry|atom|molecule|reaction|acid|base|organic|bond|chemical)\b/.test(m)) return "chemistry";
+  return "general";
+}
+
+function switchTopic(topic){ createTopic(topic); currentTopic = topic; }
+
+function classifyMessage(message){
+  const m = message.toLowerCase();
+
+  // These are observations, not conclusions about the user's character or intent.
+  const educational_context=/\b(learn|learning|study|school|project|theory|theoretical|ethical|ethically|defensive|defence|defense)\b/.test(m);
+  const authorized_target=/(my computer|my laptop|my phone|my device|our system|our network|my own|authorized|with permission|permission to test)/.test(m);
+  const unauthorized_target=/(someone(?:'s|s)?|someone else(?:'s|s)?|without permission|unauthorized|not my|another person(?:'s|s)?|their computer|their phone|friend(?:'s|s)? (?:computer|laptop|phone|device)|friends? (?:computer|laptop|phone|device))/i.test(m);
+  const asks_for_steps=/(how do i|how can i|exact steps|step by step|commands|procedure|instructions|give me steps|tell me how)/.test(m);
+  const escalating=/(exploit|break into|hack|bypass|evade|defeat|weaponize|crack|steal|gain access|compromise)/.test(m);
+
+  const clear_unauthorized_operation=unauthorized_target && asks_for_steps && escalating;
+
+  // New v2.5 shared understanding layer: uncertainty is handled separately from risk.
+  // A potentially sensitive request without enough evidence of an unauthorized
+  // objective is marked ambiguous rather than blocked.
+  let objective_clarity = "clear-safe";
+  if(clear_unauthorized_operation) objective_clarity = "clear-unauthorized";
+  else if(escalating || asks_for_steps) objective_clarity = authorized_target ? "clear-authorized" : "ambiguous";
+
+  return {
+    educational_context,
+    authorized_target,
+    unauthorized_target,
+    asks_for_steps,
+    escalating,
+    clear_unauthorized_operation,
+    objective_clarity
+  };
+}
+
+function fallbackUnderstanding(message,signals){
+  const raw=String(message||'').trim();
+  const lower=raw.toLowerCase();
+  let topic=currentTopic || "general";
+  let objective="answer the user's question";
+  let target=currentTopic || "general topic";
+  let requested_output=signals.asks_for_steps ? "steps or procedure" : "explanation";
+
+  // Deterministic fallback for common question forms. This is not intended
+  // to replace the language model; it prevents a failed model call from
+  // destroying the concrete subject needed by the Knowledge Tool.
+  const whyMatch=raw.match(/^why\s+(?:is|are|does|do|did|can|can'?t|isn'?t|aren'?t)\s+(.+?)(?:\?|$)/i);
+  const whatMatch=raw.match(/^what\s+(?:is|are|does|do)\s+(.+?)(?:\?|$)/i);
+  const howMatch=raw.match(/^how\s+(?:does|do|is|are|can)\s+(.+?)(?:\?|$)/i);
+  const subject=(whyMatch?.[1]||whatMatch?.[1]||howMatch?.[1]||'').trim();
+  if(subject){
+    objective=whyMatch ? `understand why ${subject}` : whatMatch ? `understand what ${subject} is` : `understand how ${subject}`;
+    topic=subject;
+    target=subject;
+  } else if(raw.length>0 && !signals.asks_for_steps && !signals.escalating){
+    objective=`understand or answer: ${raw.slice(0,160)}`;
+    topic=raw.slice(0,100);
+    target=raw.slice(0,100);
+  } else if(signals.objective_clarity === "clear-unauthorized") {
+    objective="obtain unauthorized operational assistance";
+    target=signals.unauthorized_target ? "another person's or unauthorized system" : target;
+  } else if(signals.objective_clarity === "ambiguous") {
+    objective="understand or accomplish an unclear technical objective";
+  }
+
+  return {topic,objective,requested_output,target,
+    stated_purpose: signals.educational_context ? "learning/education" : "not explicitly stated",
+    conversation_relation:"current turn", objective_clarity:signals.objective_clarity,
+    confidence:subject ? 0.75 : 0.55, source:"local-fallback"};
+}
+
+function cleanJsonText(text){
+  const t=text.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
+  const start=t.indexOf('{');
+  const end=t.lastIndexOf('}');
+  return start>=0 && end>start ? t.slice(start,end+1) : t;
+}
+
+function buildUnderstandingInstruction(message,state,signals,repair=false){
+  const task = repair
+    ? `Your previous understanding was too generic. Re-read the exact user message and repair the representation. The topic and objective MUST describe the actual subject asked about. Never use generic filler such as "answer the user's question", "provide information", or "help the user" when the message contains a specific subject. For example, if the message is "Why is the sky blue?", the objective should be "understand why the sky appears blue" and the topic should relate to the sky/atmosphere/optics.`
+    : `Extract the actual subject and goal from the user's exact message. Preserve the user's concrete subject in topic/objective. Do not replace a specific question with generic wording such as "answer the user's question", "provide information", or "help the user". If the message asks "Why is the sky blue?", the representation must clearly refer to the sky/atmosphere and why it appears blue.`;
+  return `You are the Request Understanding Layer of an experimental AI assistant. ${task} Do NOT decide whether the request is allowed or harmful; Agent B does that separately. Do not invent facts. Return ONLY valid JSON with exactly these keys: topic, objective, requested_output, target, stated_purpose, conversation_relation, objective_clarity, confidence. objective_clarity must be one of: clear-safe, clear-authorized, ambiguous, clear-unauthorized. confidence must be a number from 0 to 1.
+
+Current topic: ${currentTopic}. Previous state summary: ${state.summary || "none"}.
+Local observations (use as evidence, not as final truth): ${JSON.stringify(signals)}
+
+User message (analyze this exact text): ${message}`;
+}
+
+function understandingIsGeneric(u,message){
+  const bad=/^(answer|respond|provide|give|help|explain|information|address|handle)\b.*(user|question|request|query)|^(answer the user's question|provide information|help the user)$/i;
+  const fields=[u?.topic,u?.objective,u?.target,u?.requested_output].filter(Boolean).map(String);
+  if(fields.some(v=>bad.test(v.trim()))) return true;
+  const meaningful=String(message).toLowerCase().split(/[^a-z0-9]+/).filter(w=>w.length>=5 && !['about','there','which','where','would','could','should','please','thing','question'].includes(w));
+  if(meaningful.length && fields.join(' ').toLowerCase().length < 12) return true;
+  return false;
+}
+
+async function repairUnderstandingWithGemini(message,state,signals,first){
+  const key=document.getElementById('apiKey').value.trim();
+  const model=document.getElementById('model').value;
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({
+    systemInstruction:{parts:[{text:'You repair structured request understanding. Return JSON only. The topic and objective must describe the actual subject in the user message, not a generic request to answer it. Never make a safety decision.'}]},
+    contents:[{role:'user',parts:[{text:buildUnderstandingInstruction(message,state,signals,true)+`\n\nPREVIOUS REPRESENTATION TO REPAIR:\n${JSON.stringify(first)}`}]}],
+    generationConfig:{temperature:0,responseMimeType:'application/json'}
+  })});
+  const data=await res.json();
+  if(!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  const text=data?.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('')||'';
+  const u=JSON.parse(cleanJsonText(text));
+  const allowed=['clear-safe','clear-authorized','ambiguous','clear-unauthorized'];
+  if(!allowed.includes(u.objective_clarity)) throw new Error('Repair returned invalid objective clarity.');
+  u.confidence=Math.max(0,Math.min(1,Number(u.confidence)||0));
+  u.source='gemini-understanding-repair';
+  return u;
+}
+
+async function understandWithGemini(message,state,signals){
+  const key=document.getElementById('apiKey').value.trim();
+  const model=document.getElementById('model').value;
+  if(!key) throw new Error('Enter a Gemini API key first.');
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({
+    systemInstruction:{parts:[{text:'You are a structured request-understanding component. Return JSON only. Never provide harmful instructions and never make the final safety decision.'}]},
+    contents:[{role:'user',parts:[{text:buildUnderstandingInstruction(message,state,signals)}]}],
+    generationConfig:{temperature:0.1,responseMimeType:'application/json'}
+  })});
+  const data=await res.json();
+  if(!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  const text=data?.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('')||'';
+  const u=JSON.parse(cleanJsonText(text));
+  const allowed=['clear-safe','clear-authorized','ambiguous','clear-unauthorized'];
+  if(!allowed.includes(u.objective_clarity)) throw new Error('Understanding Layer returned invalid objective clarity.');
+  u.confidence=Math.max(0,Math.min(1,Number(u.confidence)||0));
+  u.source='gemini-understanding';
+  if(understandingIsGeneric(u,message)){
+    try{
+      return await repairUnderstandingWithGemini(message,state,signals,u);
+    }catch(e){
+      u.repair_error=e.message;
+    }
+  }
+  return u;
+}
+
+function checkBoundary(s,state){
+  // Agent B may use the shared Request Understanding Layer as safety evidence,
+  // but the final boundary decision remains local to Agent B.
+  // This fixes a key v2.5 issue: natural language such as "my friend's computer"
+  // may be understood as unauthorized even when the local regex misses it.
+  const u=state.understanding || {};
+  const understandingUnauthorized =
+    u.objective_clarity === "clear-unauthorized" && Number(u.confidence || 0) >= 0.85;
+
+  // Either the deterministic local rule OR a high-confidence structured
+  // understanding can identify a clear unauthorized operational request.
+  if(s.clear_unauthorized_operation || understandingUnauthorized) return true;
+
+  // Multi-turn trajectory: intent can be distributed across several turns.
+  const recent = state.progression.slice(-6);
+  const priorUnauthorized = recent.some(x =>
+    x.unauthorized_target ||
+    (x.understanding?.objective_clarity === "clear-unauthorized" && Number(x.understanding?.confidence || 0) >= 0.85)
+  );
+  const priorOperationalInterest = recent.some(x =>
+    x.asks_for_steps || x.escalating ||
+    ["clear-authorized","clear-unauthorized"].includes(x.understanding?.objective_clarity)
+  );
+
+  // Once an unauthorized objective and operational/step-seeking behavior have
+  // appeared in the same recent trajectory, a further request for steps crosses
+  // the boundary.
+  if(priorUnauthorized && priorOperationalInterest && s.asks_for_steps) return true;
+
+  return false;
+}
+
+function safeResponse(state){
+  if(state.hard_stop)
+    return "I can't continue this thread with instructions that would enable harmful or unauthorized activity. You can start a new conversation for a different question.";
+
+  return "Socratic Shield is active. I can explain the safe fundamentals, but I won't provide operational instructions that would enable harm or unauthorized access.\n\nBasic concept: an attack generally depends on finding a weakness or unsafe condition in a system and attempting to take advantage of it.\n\nTheoretical question: What general weakness or condition would an attacker need to identify before an attack could succeed?";
+}
+
+function uncertaintyResponse(){
+  return "I can help with the safe fundamentals first. For example, in a technical context, systems can have weaknesses because of insecure configuration, outdated components, weak authentication, or software defects. I won't provide a procedure for exploiting a weakness while the objective is still unclear.\n\nWhat are you trying to understand or accomplish with this?";
+}
+
+function demoResponse(message,state){
+  if(state.shield_active || state.hard_stop) return safeResponse(state);
+  return "Demo Agent A: I can explain this normally. Switch to Gemini API mode to test the Shield against a much broader range of real questions.";
+}
+
+function buildSystemInstruction(state){
+  return `You are Agent A in an experimental AI-safety prototype called Socratic Shield.\n\nYour job is to be a helpful general-purpose assistant. Answer normal educational, scientific, technical, and everyday questions clearly. Do not claim that you are Agent B. Agent B separately monitors the conversation.\n\nIf a request seeks harmful or unauthorized operational instructions, do not provide actionable steps, commands, exploit procedures, or other details that enable wrongdoing. Instead give safe high-level context and suggest defensive, legal, or educational alternatives.\n\nCurrent topic: ${currentTopic}.\nCurrent risk score: ${state.risk_score}.\nShield active: ${state.shield_active}.\n\nShared Request Understanding: ${JSON.stringify(state.understanding || {})}\nUse this structured representation to plan the answer, but do not treat it as infallible. Agent B remains the final safety controller.\n\nImportant prototype rule: when Shield is active, the browser will normally not call you and will use the local Socratic Shield response instead.`;
+}
+
+async function callGemini(message,state){
+  const key = document.getElementById('apiKey').value.trim();
+  const model = document.getElementById('model').value;
+  if(!key) throw new Error('Enter a Gemini API key first.');
+
+  const contents = state.history.map(x => ({role:x.role, parts:[{text:x.text}]}));
+  contents.push({role:'user', parts:[{text:message}]});
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const res = await fetch(url, {
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-goog-api-key':key},
+    body:JSON.stringify({
+      systemInstruction:{parts:[{text:buildSystemInstruction(state)}]},
+      contents:contents,
+      generationConfig:{temperature:0.7}
+    })
+  });
+
+  const data = await res.json();
+  if(!res.ok){
+    const detail = data?.error?.message || `HTTP ${res.status}`;
+    throw new Error(detail);
+  }
+  const text = data?.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('') || '';
+  if(!text) throw new Error('The model returned no text.');
+  return text;
+}
+
+
+// ============================================================
+// AGENT A v3.2 — RELEVANCE + TOPIC SWITCHING EXPERIMENT
+// Knowledge Tool: retrieves factual context from Wikipedia.
+// Language Tool: Gemini turns structured understanding + retrieved
+// knowledge into a natural-language answer.
+// The original user message is intentionally NOT sent to the language
+// tool in this mode; Agent A passes structured understanding + retrieved knowledge instead.
+// ============================================================
+
+function makeKnowledgeQueries(understanding){
+  const clean=v=>String(v||'').replace(/[^a-zA-Z0-9 ._-]/g,' ').replace(/\s+/g,' ').trim().slice(0,180);
+  const q=[];
+  if(understanding.objective) q.push(clean(understanding.objective));
+  if(understanding.target && !/^general topic$/i.test(understanding.target))
+    q.push(clean(`${understanding.objective||''} ${understanding.target}`));
+  if(understanding.topic) q.push(clean(`${understanding.topic} ${understanding.objective||''}`));
+  return [...new Set(q.filter(Boolean))].slice(0,3);
+}
+
+function wikipediaTitleFromUnderstanding(u){
+  const text=[u.topic,u.objective,u.target,u.requested_output].filter(Boolean).join(' ').toLowerCase();
+  const aliases=[
+    [/sky (is|appears|look|looks)? ?blue|blue sky|why.*sky.*blue/,'Rayleigh scattering'],
+    [/photosynthesis/,'Photosynthesis'],
+    [/cpu|central processing unit|processor|how.*computer.*work/,'Central processing unit'],
+    [/computer (security|vulnerabilit)|cybersecurity/,'Computer security'],
+    [/ice.*float|float.*ice|ice.*water/,'Ice'],
+    [/density|buoyancy|archimedes/,'Buoyancy'],
+    [/newton.*(law|motion)|force.*motion/,'Newton’s laws of motion'],
+    [/electricity/,'Electricity'],
+    [/dna|genetics/,'DNA'],
+    [/\batom\b|what.*atom/,'Atom'],
+    [/molecule|what.*molecule/,'Molecule'],
+    [/electron|what.*electron/,'Electron'],
+    [/proton|what.*proton/,'Proton'],
+    [/neutron|what.*neutron/,'Neutron'],
+    [/cell biology|biology.*cell/,'Cell (biology)']
+  ];
+  for(const [pattern,title] of aliases) if(pattern.test(text)) return title;
+  return null;
+}
+
+function relevanceScore(title,extract,understanding,query){
+  const source=`${title} ${extract}`.toLowerCase();
+  const titleText=String(title||'').toLowerCase();
+  const terms=[
+    ...String(understanding.objective||'').toLowerCase().split(/[^a-z0-9]+/),
+    ...String(understanding.target||'').toLowerCase().split(/[^a-z0-9]+/),
+    ...String(understanding.topic||'').toLowerCase().split(/[^a-z0-9]+/),
+    ...String(query||'').toLowerCase().split(/[^a-z0-9]+/)
+  ].filter(w=>w.length>=4 && ![
+    'what','why','how','explain','understand','general','topic',
+    'does','about','with','from','into','that','this','user'
+  ].includes(w));
+
+  const unique=[...new Set(terms)];
+  let score=0;
+
+  for(const term of unique){
+    if(titleText.includes(term)) score += 8;
+    else if(source.includes(term)) score += 2;
+  }
+
+  const titleHits=unique.filter(term=>titleText.includes(term)).length;
+  if(titleHits>=2) score += 8;
+
+  return score;
+}
+
+function knowledgeCandidateIsRelevant(candidate,understanding){
+  const utext=[
+    understanding?.topic,
+    understanding?.target,
+    understanding?.objective
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  const title=String(candidate?.title||'').toLowerCase();
+  const stopTitles=['question and answer system','water politics','answer','help'];
+  if(stopTitles.includes(title.trim())) return false;
+
+  const subjectTerms=[...new Set(
+    utext.split(/[^a-z0-9]+/)
+      .filter(w=>w.length>=4 && ![
+        'what','why','how','explain','understand','general','topic',
+        'does','about','with','from','into','that','this','user'
+      ].includes(w))
+  )];
+
+  if(!subjectTerms.length) return true;
+
+  const titleHits=subjectTerms.filter(term=>title.includes(term)).length;
+  return titleHits>0;
+}
+
+async function knowledgeTool(understanding,state){
+  const cacheKey=JSON.stringify({
+    topic:understanding?.topic||'',
+    objective:understanding?.objective||'',
+    target:understanding?.target||''
+  });
+  if(state?.knowledge_cache?.[cacheKey]){
+    return {...state.knowledge_cache[cacheKey],cached:true};
+  }
+
+  const directTitle=wikipediaTitleFromUnderstanding(understanding);
+  const queries=makeKnowledgeQueries(understanding);
+  const candidates=[];
+
+  // Direct concept mapping handles common educational questions where a
+  // general search engine can otherwise return a generic Q&A article.
+  if(directTitle) candidates.push({title:directTitle,score:100,query:queries[0]||directTitle});
+
+  // Otherwise search several formulations and keep multiple candidates.
+  for(const query of queries){
+    const searchUrl='https://en.wikipedia.org/w/api.php?action=query&list=search&srlimit=5&srsearch='+encodeURIComponent(query)+'&format=json&origin=*';
+    const searchRes=await fetch(searchUrl,{headers:{'Accept':'application/json'}});
+    if(!searchRes.ok) throw new Error(`Knowledge search HTTP ${searchRes.status}`);
+    const searchData=await searchRes.json();
+    for(const item of (searchData?.query?.search||[])){
+      if(item?.title && !candidates.some(c=>c.title===item.title)){
+        const score=relevanceScore(item.title,item.snippet||'',understanding,query);
+        if(knowledgeCandidateIsRelevant(item,understanding) || score>=6){
+          candidates.push({title:item.title,score,query});
+        }
+      }
+    }
+  }
+
+  if(!candidates.length) throw new Error('Knowledge Tool could not find relevant candidates.');
+
+  // Fetch summaries for the strongest candidates and score the actual content.
+  const ranked=candidates.sort((a,b)=>b.score-a.score).slice(0,5);
+  const enriched=[];
+  for(const c of ranked){
+    try{
+      const url='https://en.wikipedia.org/api/rest_v1/page/summary/'+encodeURIComponent(c.title.replace(/\s+/g,'_'));
+      const res=await fetch(url,{headers:{'Accept':'application/json'}});
+      if(!res.ok) continue;
+      const data=await res.json();
+      const extract=(data.extract||'').trim();
+      if(!extract) continue;
+      enriched.push({...c,finalScore:c.score+relevanceScore(data.title||c.title,extract,understanding,c.query),data,extract});
+    }catch(e){ /* skip an unavailable candidate */ }
+  }
+
+  if(!enriched.length) throw new Error('Knowledge Tool found candidates but could not retrieve usable information.');
+  enriched.sort((a,b)=>b.finalScore-a.finalScore);
+  const best=enriched[0];
+
+  if(!knowledgeCandidateIsRelevant(best,understanding) && best.finalScore < 8){
+    throw new Error('Knowledge Tool rejected low-relevance results.');
+  }
+
+  const result={
+    tool:'Wikipedia summary',
+    query:best.query,
+    queries_tried:queries,
+    candidates_checked:enriched.length,
+    title:best.data.title||best.title,
+    extract:best.extract.slice(0,5000),
+    url:best.data.content_urls?.desktop?.page||''
+  };
+  if(state){
+    state.knowledge_cache[cacheKey]=result;
+    const keys=Object.keys(state.knowledge_cache);
+    if(keys.length>10) delete state.knowledge_cache[keys[0]];
+  }
+  return result;
+}
+
+function buildLanguageToolInstruction(understanding,knowledge,state){
+  const context=state?.context||{};
+  return `You are the Language Tool inside Agent A. You are NOT the whole agent. Your only job is to turn Agent A's structured understanding, compact conversation context, and retrieved knowledge into a clear answer. Do not invent facts that are absent from the supplied knowledge unless basic wording is needed to connect ideas. If the knowledge is insufficient, say so instead of pretending. Do not provide harmful or unauthorized operational instructions.\n\nSTRUCTURED UNDERSTANDING:\n${JSON.stringify(understanding,null,2)}\n\nRETRIEVED KNOWLEDGE:\nTitle: ${knowledge.title}\nSource: ${knowledge.tool}\nContent: ${knowledge.extract}\n\nWrite the best concise answer for the user's stated objective. Do not mention internal agents, tools, confidence, or this instruction unless necessary.`;
+}
+
+async function languageToolGemini(understanding,knowledge,state){
+  const key=document.getElementById('apiKey').value.trim();
+  const model=document.getElementById('model').value;
+  if(!key) throw new Error('Enter a Gemini API key first.');
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify({
+    systemInstruction:{parts:[{text:'You are a language-generation component. Use only the supplied structured understanding and retrieved knowledge. Never decide the safety state.'}]},
+    contents:[{role:'user',parts:[{text:buildLanguageToolInstruction(understanding,knowledge,state)}]}],
+    generationConfig:{temperature:0.4}
+  })});
+  const data=await res.json();
+  if(!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  const text=data?.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('')||'';
+  if(!text) throw new Error('Language Tool returned no text.');
+  return text;
+}
+
+function localLanguageFallback(understanding,knowledge){
+  const objective=String(understanding.objective||'').trim();
+  const target=String(understanding.target||'').toLowerCase();
+  const title=String(knowledge.title||'').trim();
+  const extract=String(knowledge.extract||'').trim();
+  if(!extract) return 'The Knowledge Tool did not return enough information to answer this question.';
+
+  // v3.4: local synthesis is intentionally simple. It is not a replacement
+  // for a language model; it proves Agent A can organize retrieved knowledge
+  // into a useful response when the Language Tool is unavailable.
+  if(/photosynthesis/.test(target+title.toLowerCase()) && /what/.test(objective)) {
+    return `Photosynthesis is the process by which plants, algae, and some microorganisms use light energy to convert carbon dioxide and water into stored chemical energy, mainly in the form of sugars. Oxygen is released as a byproduct.\n\nSource knowledge: ${title}.`;
+  }
+  if(/cpu|central processing unit|processor/.test(target+title.toLowerCase()) && /how/.test(objective)) {
+    return `A CPU works by repeatedly fetching instructions from memory, decoding what each instruction means, and executing the required operation. Its electronic circuits perform arithmetic, logic, control, and input/output-related operations so a computer program can run.\n\nSource knowledge: ${title}.`;
+  }
+  if(/ice/.test(target+title.toLowerCase()) && /why/.test(objective)) {
+    return `Ice floats on liquid water because ice is less dense than liquid water. When water freezes, hydrogen bonding forms a more open crystal structure, so the same water molecules occupy more volume. Lower density makes ice buoyant.\n\nSource knowledge: ${title}.`;
+  }
+  if(/sky|rayleigh/.test(target+title.toLowerCase()) && /why/.test(objective)) {
+    return `The sky appears blue because molecules in Earth's atmosphere scatter shorter wavelengths of visible light more strongly than longer wavelengths. Blue light is therefore scattered across the sky more effectively than red light.\n\nSource knowledge: ${title}.`;
+  }
+
+  const sentences=extract.match(/[^.!?]+[.!?]+/g)||[extract];
+  const concise=sentences.slice(0,3).join(' ').trim();
+  return `${concise}\n\nSource knowledge: ${title}.`;
+}
+
+async function agentAToolAnswer(state){
+  if(!state.understanding) throw new Error('No Request Understanding available.');
+  state.language_error='';
+  const knowledge=await knowledgeTool(state.understanding,state);
+  let response;
+  let languageSource='Gemini Language Tool';
+  try{
+    response=await languageToolGemini(state.understanding,knowledge,state);
+  }catch(err){
+    // v3.1: a failed language model must not erase successful retrieval.
+    // Keep the architecture testable even when the free-tier model quota is exhausted.
+    languageSource='Knowledge Tool fallback';
+    response=localLanguageFallback(state.understanding,knowledge);
+    state.language_error=err.message;
+  }
+  return {response,knowledge,languageSource};
+}
+
+function updateSummary(state,message){
+  // v3.4: keep a compact structured memory instead of replacing the
+  // conversation summary with only the latest message. This is deliberately
+  // local and bounded so the system does not need to resend the full transcript.
+  const u=state.understanding||{};
+  const subject=String(u.target||u.topic||'').trim();
+  if(subject && subject.toLowerCase()!=='general topic') state.context.subject=subject;
+
+  const objective=String(u.objective||'').trim();
+  if(objective && !state.context.objectives.includes(objective)){
+    state.context.objectives.push(objective);
+    state.context.objectives=state.context.objectives.slice(-5);
+  }
+
+  const target=String(u.target||'').trim();
+  if(target && !state.context.key_targets.includes(target)){
+    state.context.key_targets.push(target);
+    state.context.key_targets=state.context.key_targets.slice(-5);
+  }
+
+  state.context.recent_turns.push({
+    message:String(message).slice(0,240),
+    objective:objective.slice(0,240),
+    objective_clarity:u.objective_clarity||'unknown'
+  });
+  state.context.recent_turns=state.context.recent_turns.slice(-6);
+
+  state.summary = [
+    `Topic: ${currentTopic}`,
+    state.context.subject ? `Subject: ${state.context.subject}` : '',
+    state.context.objectives.length ? `Recent objectives: ${state.context.objectives.join(' | ')}` : ''
+  ].filter(Boolean).join('. ');
+}
+
+function updateUI(state,signals={}){
+  document.getElementById('topic').textContent=currentTopic;
+  document.getElementById('attention').textContent=state.attention_level;
+  document.getElementById('risk').textContent=state.risk_score;
+  document.getElementById('progression').textContent=state.progression.length+' turns';
+  document.getElementById('shield').textContent=state.shield_active?'ON':'OFF';
+  document.getElementById('shield').className='status '+(state.shield_active?'on':'off');
+  document.getElementById('stop').textContent=state.hard_stop?'ON':'OFF';
+  document.getElementById('stop').className='status '+(state.hard_stop?'on':'off');
+  document.getElementById('signals').textContent='Signals: '+(Object.keys(signals).length?JSON.stringify(signals):'none');
+  document.getElementById('objective').textContent=state.objective_clarity || 'unknown';
+  const u=state.understanding||{};
+  document.getElementById('requestedOutput').textContent=u.requested_output||'unknown';
+  document.getElementById('target').textContent=u.target||'unknown';
+  document.getElementById('purpose').textContent=u.stated_purpose||'unknown';
+  document.getElementById('confidence').textContent=(typeof u.confidence==='number' ? Math.round(u.confidence*100)+'%' : 'unknown');
+  document.getElementById('agentTrace').textContent=state.tool_trace || 'Agent A tools: not used yet.';
+}
+
+function add(role,text){
+  const d=document.createElement('div');
+  d.className='msg '+role;
+  d.textContent=text;
+  document.getElementById('chat').appendChild(d);
+  window.scrollTo(0,document.body.scrollHeight);
+}
+
+function setConnection(text,ok=false){
+  const el=document.getElementById('connection');
+  el.textContent=text;
+  el.className='small settings '+(ok?'ok':'warning');
+}
+
+async function testConnection(){
+  if(document.getElementById('mode').value==='demo'){
+    setConnection('Mode: Demo — no external model connection.',true); return;
+  }
+  try{
+    setConnection('Testing Gemini connection...');
+    const fakeState={history:[],risk_score:0,shield_active:false};
+    const text=await callGemini('Reply with exactly: CONNECTION_OK',fakeState);
+    setConnection('Gemini connection works: '+text.trim().slice(0,80),true);
+  }catch(err){ setConnection('Connection error: '+err.message); }
+}
+
+document.getElementById('mode').addEventListener('change',()=>{
+  const gemini=['gemini','agent-tools'].includes(document.getElementById('mode').value);
+  document.getElementById('model').disabled=!gemini;
+  document.getElementById('apiKey').disabled=!gemini;
+  document.getElementById('testBtn').disabled=!gemini;
+  const mode=document.getElementById('mode').value;
+  setConnection(mode==='agent-tools'?'Mode: Agent A Tool Architecture — Knowledge Tool + Gemini Language Tool.':(gemini?'Mode: Gemini Direct — key stays only in this page memory.':'Mode: Demo — no external model connection.'),true);
+});
+document.getElementById('testBtn').addEventListener('click',testConnection);
+
+document.getElementById('form').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const input=document.getElementById('input');
+  const message=input.value.trim();
+  if(!message) return;
+  input.value='';
+  add('user',message);
+
+  // Hard stop is scoped to the current conversation thread, not to a topic.
+  // Check it before topic switching so an unrelated new topic cannot bypass it.
+  if(currentTopic && topics[currentTopic]?.hard_stop){
+    updateUI(topics[currentTopic]);
+    add('ai',safeResponse(topics[currentTopic]));
+    return;
+  }
+
+  const detectedTopic=detectTopic(message);
+  if(detectedTopic!==currentTopic) switchTopic(detectedTopic);
+  const state=topics[currentTopic];
+
+  if(state.hard_stop){
+    updateUI(state);
+    add('ai',safeResponse(state));
+    return;
+  }
+
+  const signals=classifyMessage(message);
+  state.progression.push(signals);
+
+  // First build the shared understanding representation. The LLM may improve
+  // interpretation, but Agent B's local safety rules remain authoritative.
+  // v3.1: Agent A Tool Architecture is local-first. This keeps the
+  // understanding layer cheap and leaves the model call for the Language Tool.
+  // Gemini Direct can still use Gemini for richer request understanding.
+  state.understanding=fallbackUnderstanding(message,signals);
+  const selectedMode=document.getElementById('mode').value;
+  if(selectedMode==='gemini') {
+    try {
+      state.understanding=await understandWithGemini(message,state,signals);
+    } catch(err) {
+      add('system','Understanding Layer used local fallback: '+err.message);
+    }
+  } else if(selectedMode==='agent-tools') {
+    add('system','Agent A Request Understanding: local-first representation created before external tools.');
+  }
+  state.objective_clarity=state.understanding.objective_clarity;
+  state.safe_information_mode=(state.objective_clarity === "ambiguous");
+
+  // Store the structured understanding with this turn so Agent B can use it
+  // for future multi-turn trajectory analysis as well.
+  state.progression[state.progression.length-1] = {
+    ...signals,
+    understanding: state.understanding
+  };
+
+  // Attention is independent from risk and never activates Shield.
+  // Prototype rule: suspicious/deepening behavior adds +5 attention.
+  const suspiciousBehavior = signals.escalating || signals.asks_for_steps;
+  if(suspiciousBehavior) state.attention_level+=5;
+
+  // Agent B combines its own observations with the shared representation.
+  // The LLM does not directly change risk_score.
+  const boundary=checkBoundary({...signals, objective_clarity:state.objective_clarity},state);
+  if(boundary){
+    // A confirmed safety-boundary crossing adds +5 attention and +25 risk.
+    state.attention_level+=5;
+    state.risk_score+=25;
+    state.shield_active=true;
+    if(state.risk_score>=50) state.hard_stop=true;
+  }
+
+  updateSummary(state,message);
+  updateUI(state,{...signals,understanding_source:state.understanding.source});
+
+  if(state.hard_stop || state.shield_active){
+    add('ai',safeResponse(state));
+    return;
+  }
+
+  const mode=document.getElementById('mode').value;
+  try{
+    if(state.safe_information_mode){
+      add('system','Agent B is uncertain about the objective. Agent A is restricted to safe, non-operational information while Agent B gathers more evidence.');
+      const response=uncertaintyResponse();
+      state.history.push({role:'user',text:message});
+      state.history.push({role:'model',text:response});
+      add('ai',response);
+      return;
+    }
+
+    add('system','Agent B cleared this turn for normal Agent A response.');
+    let response;
+    if(mode==='gemini') {
+      state.tool_trace='Agent A: Request Understanding → Gemini Direct language/reasoning → answer.';
+      response=await callGemini(message,state);
+    } else if(mode==='agent-tools') {
+      state.tool_trace='Agent A: Request Understanding → Knowledge Tool → Gemini Language Tool → answer.';
+      updateUI(state,{...signals,understanding_source:state.understanding.source});
+      const result=await agentAToolAnswer(state);
+      response=result.response;
+      state.tool_trace=`Agent A: Request Understanding → Knowledge Tool (${result.knowledge.title}${result.knowledge.cached?' • cache hit':''}) → ${result.languageSource} → answer.`;
+      add('system',`Knowledge Tool used: ${result.knowledge.title}
+Source: ${result.knowledge.tool}
+Query: ${result.knowledge.query}
+Candidates checked: ${result.knowledge.candidates_checked}
+Language stage: ${result.languageSource}${state.language_error ? '\nModel note: '+state.language_error : ''}`);
+    } else {
+      state.tool_trace='Agent A: demo response; no external tools used.';
+      response=demoResponse(message,state);
+    }
+    updateUI(state,{...signals,understanding_source:state.understanding.source});
+    state.history.push({role:'user',text:message});
+    state.history.push({role:'model',text:response});
+    add('ai',response);
+  }catch(err){
+    add('system','Agent A connection failed: '+err.message+'\n\nAgent B state was still processed locally.');
+  }
+});
+
+// Initial state
+switchTopic('general');
+document.getElementById('model').disabled=true;
+document.getElementById('apiKey').disabled=true;
+document.getElementById('testBtn').disabled=true;
+updateUI(topics.general);
+add('ai','Agent A is ready. Agent B analyzes each turn locally before Agent A responds. Tool Architecture mode is local-first: compact context + knowledge retrieval + one optional Gemini Language Tool call.');
+</script>
+</body>
+</html>
